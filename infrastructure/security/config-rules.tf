@@ -1,1 +1,0 @@
-# AWS Config rules for compliance monitoring 
