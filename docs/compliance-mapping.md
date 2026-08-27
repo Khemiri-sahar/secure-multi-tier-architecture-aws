@@ -1,4 +1,29 @@
 # Compliance Mapping
 
-| CIS Control ID | Enforcing Resource | Status |
-|-----------------|---------------------|--------|
+This maps the controls described in the architecture to CIS AWS Foundations Benchmark v5.0.0 and PCI DSS v4.0.1. Each row corresponds to an entry in [`threat-model.md`](threat-model.md)'s Controls table. Not every control lines up cleanly with both frameworks, and where it doesn't, the cell just says N/A with a short reason instead of forcing a match that isn't really there.
+
+| Threat/Control area | CIS control ID | PCI DSS requirement | Enforcing AWS resource | How it's enforced |
+|---|---|---|---|---|
+| S3 asset/log encryption | N/A (the benchmark dropped its standalone S3 encryption-at-rest control once AWS made SSE-S3 the default for all buckets in 2023) | Req 3 (Protect Stored Account Data) | S3 CMK | Used as the bucket's SSE-KMS key |
+| RDS storage encryption | 2.2.1 (RDS DB instances should have encryption at-rest enabled) | Req 3 (Protect Stored Account Data) | RDS CMK | Used for RDS storage encryption |
+| EBS volume encryption | 5.1.1 (EBS default encryption should be enabled) | N/A (no cardholder data lives on compute-tier volumes in this design) | EBS CMK | Used for EBS volume encryption |
+| SSM SecureString encryption | N/A (no CIS AWS Foundations control targets Parameter Store) | N/A (SecureString values here are app config, not cardholder data) | SSM CMK | Used to encrypt SecureString parameters |
+| CMK rotation | 3.6 (AWS KMS key rotation should be enabled) | Req 3 (cryptographic key management) | All four CMKs | `enable_key_rotation = true` on each key |
+| RDS credential rotation | N/A (CIS AWS Foundations doesn't cover Secrets Manager rotation) | Req 8 (Identify Users and Authenticate Access, credential rotation) | Secrets Manager secret and rotation config | 30 day schedule via the AWS provided single user RDS rotation Lambda pattern |
+| RDS credential access restriction | N/A (no CIS control for Secrets Manager resource policies) | Req 7 (Restrict Access by Business Need to Know) | Secrets Manager resource policy | Denies plaintext `GetSecretValue` to everything except the app tier role and the rotation Lambda's role, and denies access from outside the account |
+| GuardDuty threat detection | N/A (GuardDuty isn't a CIS AWS Foundations Benchmark control) | Req 11 (Test Security of Systems and Networks Regularly, intrusion detection) | GuardDuty detector | Account wide detector, S3 Protection enabled, findings sent to Security Hub |
+| Security Hub aggregation | N/A (Security Hub is the aggregator itself, not a discrete checked control) | N/A (same reasoning) | Security Hub | Aggregates GuardDuty and Config findings, and evaluates the account against both CIS AWS Foundations Benchmark and PCI DSS |
+| Config rule, RDS encryption drift | 2.2.1 | Req 3 (Protect Stored Account Data) | Config managed rule `rds-storage-encrypted` | Continuous evaluation, not a point in time check |
+| Config rule, EBS encryption drift | 5.1.1 | N/A (see the EBS volume encryption row above) | Config managed rule `encrypted-volumes` | Continuous evaluation |
+| Config rule, S3 public access drift | 2.1.4 (S3 general purpose buckets should block public access) | Req 7 (Restrict Access by Business Need to Know) | Config managed rule `s3-bucket-public-read-prohibited` | Continuous evaluation of the assets/logs bucket |
+| Config rule, IAM MFA drift | 1.9 (MFA enabled for all IAM users with a console password) | Req 8 (Identify Users and Authenticate Access, MFA) | Config managed rule `iam-user-mfa-enabled` | Continuous evaluation |
+| Config auto-remediation | N/A (no CIS control targets auto-remediation mechanisms specifically) | Req 2 (Apply Secure Configurations to All System Components) | SSM Automation document, triggered by Config | A non-compliant resource triggers remediation directly, independent of the GuardDuty/Lambda path |
+| CloudTrail multi-region | 3.1 (CloudTrail enabled with at least one multi-Region trail) | Req 10 (Log and Monitor All Access) | CloudTrail trail | One trail, multi-region enabled |
+| CloudTrail log file validation | 3.2 (CloudTrail log file validation enabled) | Req 10 (Log and Monitor All Access) | CloudTrail trail | SHA-256 digest signing enabled |
+| CloudTrail log encryption | 3.5 (CloudTrail should have encryption at-rest enabled) | Req 3 (Protect Stored Account Data) | S3 CMK (the same key as the S3 row above) | CloudTrail delivers to the S3 assets/logs bucket, encrypted with that key |
+| CloudTrail's S3 bucket not public | N/A (no standalone check for this in the current benchmark; it's covered generically by the S3 public access control, 2.1.4, above) | Req 7 (Restrict Access by Business Need to Know) | S3 bucket policy | Blocks public access, a preventive control distinct from the Config rule's detective check |
+| WAF, public facing app protection | N/A (CIS AWS Foundations Benchmark doesn't cover application layer WAF) | Req 6.4.2 (public facing web applications protected by an automated technical solution, WAF or equivalent) | WAF WebACL | Associated directly with the ALB: AWS Managed Core rule group, SQLi rule group, and a custom rate based rule |
+| Shield Standard (DDoS) | N/A (not covered) | N/A (DDoS protection isn't a named PCI DSS requirement) | Shield Standard | Automatic, always on, across all endpoints |
+| Per tier IAM roles | N/A (no current CIS control covers this specific check) | Req 7 (Restrict Access by Business Need to Know) | IAM roles (app tier, rotation Lambda, and so on) | Each tier's role is scoped to only the actions and resources it needs |
+| SCP guardrails | N/A (SCPs as an org wide mechanism aren't individually itemized in the CIS AWS Foundations Benchmark) | Req 12 (Support Information Security with Organizational Policies) | Service Control Policies | Deny disabling GuardDuty or Config, and deny creating unencrypted EBS volumes or RDS instances, account wide |
+| Automated incident containment | N/A (not a CIS control) | Req 12.10 (Respond Immediately to Suspected or Confirmed Security Incidents, incident response plan) | EventBridge rule and incident response Lambda | A severity 7+ finding triggers automatic security group quarantine, a snapshot, a tag, and an SNS notification |
